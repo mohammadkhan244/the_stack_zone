@@ -13,10 +13,37 @@ const PALETTE = [["#7a2cff","#ff3d7f"],["#00a2ff","#0047ff"],["#ff9d00","#ff4e00
 export function colors(seed) { let h = 0; for (const c of String(seed)) h = (h * 31 + c.charCodeAt(0)) >>> 0; return PALETTE[h % PALETTE.length]; }
 export const initials = (n) => String(n).split(/[\s&]+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join("").toUpperCase() || "★";
 
-// Guess a creator name from a Substack URL (subdomain or @handle)
+// Detect player kind from URL
+export function detectKind(url) {
+  try {
+    const u = new URL(url);
+    if (/youtube\.com|youtu\.be/.test(u.hostname)) return "youtube";
+    if (/substack\.com/.test(u.hostname)) return "substack";
+  } catch {}
+  return "link";
+}
+
+// Extract YouTube video ID from any YouTube URL form
+export function youtubeVideoId(url) {
+  try {
+    const u = new URL(url);
+    if (u.hostname === "youtu.be") return u.pathname.slice(1).split("/")[0] || null;
+    if (/youtube\.com/.test(u.hostname))
+      return u.searchParams.get("v") || (u.pathname.match(/\/(?:embed|live|shorts)\/([^/?]+)/) || [])[1] || null;
+  } catch {}
+  return null;
+}
+
+// Guess a creator name from a Substack or YouTube URL
 export function guessCreator(url) {
   try {
     const u = new URL(url);
+    // YouTube @handle in path: youtube.com/@channelname/...
+    if (/youtube\.com/.test(u.hostname)) {
+      const ch = u.pathname.match(/\/@([\w.-]+)/);
+      return ch ? ch[1] : "";
+    }
+    // Substack @handle in path
     const at = u.pathname.match(/@([\w.-]+)/); if (at) return at[1];
     const sub = u.hostname.match(/^([\w-]+)\.substack\.com$/); if (sub && !["open", "www"].includes(sub[1])) return sub[1];
   } catch {}

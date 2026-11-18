@@ -18,7 +18,7 @@
   <span class="zname" id="zname"></span>
   <div class="sp"></div>
   <button id="share">🔗 Share</button>
-  <button id="mute">🔊 On</button>
+  <button id="mute">🔇 Muted</button>
   <button class="hot" id="yell">📣 ALL THE WAY</button>
 </header>
 <main id="grid"></main>
@@ -28,7 +28,7 @@
   <div class="spons"><small>BROUGHT TO YOU BY</small>DRAFTS™</div>
 </div>
 <form id="editor">
-  <input class="url" id="url" type="url" required placeholder="Paste a Substack Live link…">
+  <input class="url" id="url" type="url" required placeholder="Paste a Substack Live or YouTube link…">
   <input id="creator" maxlength="60" placeholder="Creator name">
   <select id="cat"><option>WRITING</option><option>TECH</option><option>FICTION</option><option>POLICY</option><option>MARKETS</option><option>CULTURE</option><option>FOOD</option><option>FITNESS</option><option>LIVE</option></select>
   <button class="hot">+ ADD LIVE</button>
@@ -39,18 +39,37 @@
 </form>
 <div id="hype"><div>HE COULD GO<br>ALL THE WAY!<small id="hwho"></small></div></div>
 
+<!-- YT callback must be defined before the API script loads -->
+<script>window.onYouTubeIframeAPIReady = () => document.dispatchEvent(new Event("yt-ready"));</script>
+<script src="https://www.youtube.com/iframe_api" async></script>
 <script src="/config.js"></script>
 <script type="module">
-import { sb, $, esc, colors, initials, guessCreator, since, isOn, hype, setSound, soundOn, unlockAudio, copy } from "/common.js";
+import { sb, $, esc, colors, initials, guessCreator, since, isOn, hype, unlockAudio, copy, detectKind, youtubeVideoId } from "/common.js";
 
 const zoneId = new URLSearchParams(location.search).get("z") || decodeURIComponent((location.pathname.match(/\/z\/([^/]+)/) || [])[1] || "");
 let key = new URLSearchParams(location.hash.slice(1)).get("key");
 try { if (key) localStorage.setItem("sz-key-" + zoneId, key); else key = localStorage.getItem("sz-key-" + zoneId); } catch {}
 let editor = false, lives = [], heads = [], zone = null;
+
+// ── Player state ─────────────────────────────────────────────────────────────
+// players: Map<liveId, { kind, vidId?, yt: YT.Player|null, deferred: bool }>
+const players = new Map();
+let focusId = null;       // liveId that currently has audio (or null)
+let shownIds = new Set(); // which liveIds are in the DOM right now
+let ytReady = typeof YT !== "undefined" && !!YT.loaded;
+const ytQ = [];           // deferred YT.Player constructors
+
+document.addEventListener("yt-ready", () => {
+  ytReady = true;
+  ytQ.splice(0).forEach(fn => fn());
+});
+
+const isMobile = () => window.innerWidth < 760;
 const viewerLink = () => location.origin + "/z/" + encodeURIComponent(zoneId);
 
 function fail(msg) { $("#gsub").textContent = msg; $("#go").style.display = "none"; }
 
+// ── Boot ──────────────────────────────────────────────────────────────────────
 async function boot() {
   if (!sb) return fail("This site isn't connected to its database yet.");
   if (!zoneId) return fail("No zone in this link.");
@@ -68,7 +87,7 @@ async function boot() {
     .on("postgres_changes", { event: "*", schema: "public", table: "lives", filter: `zone_id=eq.${zoneId}` }, onLive)
     .on("postgres_changes", { event: "*", schema: "public", table: "headlines", filter: `zone_id=eq.${zoneId}` }, loadHeads)
     .subscribe();
-  setInterval(() => { document.querySelectorAll("[data-since]").forEach((el) => (el.textContent = since(el.dataset.since))); }, 1000);
+  setInterval(() => { document.querySelectorAll("[data-since]").forEach(el => (el.textContent = since(el.dataset.since))); }, 1000);
   setInterval(render, 60000); // expire 2h-old Lives
 }
 
@@ -82,7 +101,7 @@ async function loadHeads() {
   heads = data || []; renderTicker();
 }
 function onLive({ eventType, new: n, old: o }) {
-  const i = lives.findIndex((l) => l.id === (n?.id || o?.id));
+  const i = lives.findIndex(l => l.id === (n?.id || o?.id));
   if (eventType === "INSERT") lives.push(n);
   else if (eventType === "UPDATE" && i > -1) {
     const bumped = n.paid > lives[i].paid; lives[i] = n;
@@ -96,56 +115,222 @@ function flash(l) {
   hype(`📍 ${l.creator} · +${l.paid} paid & counting`);
 }
 
+// ── HTML builders ─────────────────────────────────────────────────────────────
+function boxHtml(l) {
+  const [c1, c2] = colors(l.creator);
+  const kind = l.kind || detectKind(l.url);
+  // Editor tool buttons live in the header bar so they're always above any iframe
+  const edTools = editor
+    ? `<button class="tpaid" data-paid="${l.id}">+1</button><button class="tend" data-end="${l.id}">END</button>`
+    : "";
+  const stage = kind === "youtube"
+    ? `<div class="stage"><div class="bgfx"></div><div class="tap-audio" data-focus="${l.id}">▶ TAP FOR AUDIO</div></div>`
+    : `<a class="stage" href="${esc(l.url)}" target="_blank" rel="noopener"><div class="bgfx"></div><div class="av">${esc(initials(l.creator))}</div><span class="watch">WATCH ↗</span></a>`;
+  return `<div class="box" data-id="${l.id}" data-kind="${kind}" style="--c1:${c1};--c2:${c2}">
+    <div class="hb">
+      <span class="ini">${esc(initials(l.creator))}</span>
+      <span class="live-dot">● LIVE</span>
+      <span class="who">${esc(l.creator.toUpperCase())}</span>
+      <span class="cat">${esc(l.category)}</span>
+      ${edTools}
+    </div>
+    ${stage}
+    <div class="bug"><span class="a">ON AIR</span><span class="b">+${l.paid} PAID</span><span class="c" data-since="${l.added_at}">${since(l.added_at)}</span></div>
+  </div>`;
+}
+
+// ── Render ────────────────────────────────────────────────────────────────────
 function render() {
   const on = lives.filter(isOn), shown = on.slice(-8);
   $("#count").textContent = `${on.length} LIVE${on.length === 1 ? "" : "S"}`;
-  let html = shown.map((l) => {
-    const [c1, c2] = colors(l.creator);
-    return `<div class="box" data-id="${l.id}" style="--c1:${c1};--c2:${c2}">
-      <div class="hb"><span class="ini">${esc(initials(l.creator))}</span><span class="who">${esc(l.creator.toUpperCase())}</span><span class="cat">${esc(l.category)}</span></div>
-      <a class="stage" href="${esc(l.url)}" target="_blank" rel="noopener"><div class="bgfx"></div><div class="av">${esc(initials(l.creator))}</div><span class="watch">WATCH ↗</span></a>
-      <span class="live">● LIVE</span>
-      ${editor ? `<div class="tools"><button data-paid="${l.id}">+1 PAID</button><button data-end="${l.id}">END</button></div>` : ""}
-      <div class="bug"><span class="a">ON AIR</span><span class="b">+${l.paid} PAID</span><span class="c" data-since="${l.added_at}">${since(l.added_at)}</span></div>
-    </div>`;
-  }).join("");
+  const newIds = new Set(shown.map(l => l.id));
+
+  // Detach existing player iframes before wiping innerHTML (keeps YT.Player alive)
+  const detached = new Map();
+  shownIds.forEach(id => {
+    const p = players.get(id);
+    if (p?.yt) {
+      const iframe = p.yt.getIframe?.();
+      if (iframe?.parentNode) { detached.set(id, iframe); iframe.remove(); }
+    }
+  });
+
+  let html = shown.map(boxHtml).join("");
   for (let i = shown.length; i < 8; i++) html += `<div class="box empty">${editor ? "PASTE A LIVE BELOW ↓" : "WAITING FOR A LIVE…"}</div>`;
   $("#grid").innerHTML = html;
+
+  // Restore saved iframes or create new players
+  shown.forEach(l => {
+    if (detached.has(l.id)) {
+      const stage = document.querySelector(`.box[data-id="${l.id}"] .stage`);
+      if (stage) stage.prepend(detached.get(l.id));
+    } else {
+      createPlayerFor(l);
+    }
+  });
+
+  // Destroy players that left the grid
+  shownIds.forEach(id => { if (!newIds.has(id)) destroyPlayer(id); });
+  shownIds = newIds;
+
+  applyFocus();
   renderTicker();
 }
+
 function renderTicker() {
   const on = lives.filter(isOn);
-  const items = [...heads.map((h) => [h.text, "u"]), ...on.slice().reverse().map((l) => [`${l.creator} is LIVE · ${l.category}`, "up"])];
+  const items = [...heads.map(h => [h.text, "u"]), ...on.slice().reverse().map(l => [`${l.creator} is LIVE · ${l.category}`, "up"])];
   const extra = on.length - 8; if (extra > 0) items.push([`+${extra} more Lives in this zone`, ""]);
   if (!items.length) items.push([`Welcome to ${zone?.name || "the zone"}. Lives show up here when they start.`, ""]);
   $("#tt").innerHTML = items.map(([t, c]) => `<span class="${c}">${c === "up" ? "▲ " : ""}${esc(t)}</span>`).join("");
 }
 
-$("#grid").onclick = async (e) => {
+// ── Player management ─────────────────────────────────────────────────────────
+function createPlayerFor(l) {
+  if (players.has(l.id)) return;
+  const kind = l.kind || detectKind(l.url);
+  if (kind !== "youtube") { players.set(l.id, { kind, yt: null }); return; }
+  const vidId = youtubeVideoId(l.url);
+  if (!vidId) { players.set(l.id, { kind: "link", yt: null }); return; }
+  // On mobile, defer non-focused boxes — show poster until tapped
+  if (isMobile() && l.id !== focusId) { players.set(l.id, { kind, vidId, yt: null, deferred: true }); return; }
+  spawnYtPlayer(l.id, vidId);
+}
+
+function spawnYtPlayer(id, vidId) {
+  const stage = document.querySelector(`.box[data-id="${id}"] .stage`);
+  if (!stage) return;
+  const mount = document.createElement("div");
+  mount.id = "yt-" + id;
+  stage.prepend(mount);
+  const p = { kind: "youtube", vidId, yt: null, deferred: false };
+  players.set(id, p);
+  const doCreate = () => {
+    p.yt = new YT.Player("yt-" + id, {
+      videoId: vidId,
+      playerVars: { autoplay: 1, mute: 1, playsinline: 1, controls: 1, rel: 0, modestbranding: 1, origin: location.origin },
+      events: {
+        onReady(e) {
+          const iframe = e.target.getIframe();
+          if (iframe) iframe.className = "player";
+          e.target.mute();
+          if (id === focusId) e.target.unMute();
+        }
+      }
+    });
+  };
+  if (ytReady) doCreate(); else ytQ.push(doCreate);
+}
+
+function destroyPlayer(id) {
+  const p = players.get(id);
+  if (p?.yt) { try { p.yt.destroy(); } catch {} }
+  players.delete(id);
+}
+
+// ── Audio focus ───────────────────────────────────────────────────────────────
+function setAudioFocus(id) {
+  // Spawn a deferred mobile player now that the user asked for audio
+  const p = players.get(id);
+  if (p?.deferred) {
+    destroyPlayer(id);
+    const l = lives.find(x => x.id === id);
+    if (l) spawnYtPlayer(id, youtubeVideoId(l.url));
+  }
+  focusId = id;
+  applyFocus();
+}
+
+function applyFocus() {
+  players.forEach((p, id) => {
+    if (!p.yt) return;
+    try { if (id === focusId) p.yt.unMute(); else p.yt.mute(); } catch {}
+  });
+  document.querySelectorAll(".box[data-id]").forEach(box => {
+    box.classList.toggle("has-audio", box.dataset.id === focusId);
+  });
+  updateMuteBtn();
+}
+
+function updateMuteBtn() {
+  if (focusId) {
+    const l = lives.find(x => x.id === focusId);
+    const name = l ? l.creator.split(/\s+/)[0].toUpperCase() : "LIVE";
+    $("#mute").textContent = `🔊 ${name}`;
+  } else {
+    $("#mute").textContent = "🔇 Muted";
+  }
+}
+
+// ── Event handlers ────────────────────────────────────────────────────────────
+$("#grid").onclick = async e => {
   const paid = e.target.dataset.paid, end = e.target.dataset.end;
-  if (paid) { e.target.disabled = true; await sb.rpc("bump_paid", { p_zone: zoneId, p_key: key, p_live: paid }); e.target.disabled = false; }
-  if (end) { e.target.disabled = true; const { error } = await sb.rpc("end_live", { p_zone: zoneId, p_key: key, p_live: end }); if (!error) { lives = lives.filter((l) => l.id !== end); render(); } }
+  if (paid) {
+    e.target.disabled = true;
+    await sb.rpc("bump_paid", { p_zone: zoneId, p_key: key, p_live: paid });
+    e.target.disabled = false;
+    return;
+  }
+  if (end) {
+    e.target.disabled = true;
+    const { error } = await sb.rpc("end_live", { p_zone: zoneId, p_key: key, p_live: end });
+    if (!error) { lives = lives.filter(l => l.id !== end); render(); }
+    return;
+  }
+  // "▶ TAP FOR AUDIO" overlay click
+  const tap = e.target.closest("[data-focus]");
+  if (tap) { setAudioFocus(tap.dataset.focus); return; }
+  // Header bar click on a YouTube box also gives focus
+  const hb = e.target.closest(".hb");
+  if (hb) {
+    const box = hb.closest(".box[data-id]");
+    if (box && box.dataset.kind === "youtube") setAudioFocus(box.dataset.id);
+  }
 };
-$("#url").addEventListener("input", () => { if (!$("#creator").value) $("#creator").placeholder = guessCreator($("#url").value) || "Creator name"; });
-$("#editor").onsubmit = async (e) => {
+
+// Mute-all: clears audio focus (mutes all YT players)
+$("#mute").onclick = () => { focusId = null; applyFocus(); };
+
+// ENTER THE ZONE — also auto-focuses the first YouTube live if any
+$("#go").onclick = () => {
+  unlockAudio();
+  $("#gate").remove();
+  if (!focusId) {
+    const first = lives.find(l => isOn(l) && (l.kind || detectKind(l.url)) === "youtube");
+    if (first) setAudioFocus(first.id);
+  }
+};
+
+// URL input: update creator placeholder for YouTube links
+$("#url").addEventListener("input", () => {
+  if ($("#creator").value) return;
+  const url = $("#url").value;
+  const guessed = guessCreator(url);
+  const kind = detectKind(url);
+  if (!guessed && kind === "youtube") $("#creator").placeholder = "YouTube channel name";
+  else $("#creator").placeholder = guessed || "Creator name";
+});
+
+$("#editor").onsubmit = async e => {
   e.preventDefault(); $("#eerr").textContent = "";
-  const url = $("#url").value.trim(), creator = $("#creator").value.trim() || guessCreator(url);
+  const url = $("#url").value.trim(), creator = $("#creator").value.trim() || guessCreator($("#url").value);
   if (!/^https:\/\//.test(url)) return ($("#eerr").textContent = "Paste a full https:// link.");
   if (!creator) return ($("#eerr").textContent = "Add the creator's name.");
   const { error } = await sb.rpc("add_live", { p_zone: zoneId, p_key: key, p_url: url, p_creator: creator, p_category: $("#cat").value });
   if (error) return ($("#eerr").textContent = error.message);
   $("#url").value = ""; $("#creator").value = ""; $("#creator").placeholder = "Creator name";
 };
+
 $("#hlb").onclick = async () => {
   const t = $("#hl").value.trim(); if (!t) return;
   const { error } = await sb.rpc("add_headline", { p_zone: zoneId, p_key: key, p_text: t });
   if (error) $("#eerr").textContent = error.message; else $("#hl").value = "";
 };
-$("#cohost").onclick = (e) => copy(viewerLink() + "#key=" + key, e.target);
-$("#share").onclick = (e) => copy(viewerLink(), e.target);
+
+$("#cohost").onclick = e => copy(viewerLink() + "#key=" + key, e.target);
+$("#share").onclick = e => copy(viewerLink(), e.target);
 $("#yell").onclick = () => hype("", true);
-$("#mute").onclick = (e) => { setSound(!soundOn()); e.target.textContent = soundOn() ? "🔊 On" : "🔇 Muted"; };
-$("#go").onclick = () => { unlockAudio(); $("#gate").remove(); };
+
 boot();
 </script>
 </body>

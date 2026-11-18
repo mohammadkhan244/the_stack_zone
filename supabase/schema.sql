@@ -24,10 +24,14 @@ create table if not exists lives (
   url        text not null check (url ~ '^https://' and char_length(url) <= 400),
   creator    text not null check (char_length(creator) between 1 and 60),
   category   text not null default 'LIVE' check (char_length(category) <= 20),
+  kind       text not null default 'link' check (kind in ('youtube', 'substack', 'link')),
   paid       int  not null default 0,
   ended      boolean not null default false,
   added_at   timestamptz not null default now()
 );
+-- Migration for existing deployments: add kind if the column doesn't exist yet
+alter table lives add column if not exists kind text not null default 'link'
+  check (kind in ('youtube', 'substack', 'link'));
 create index if not exists lives_zone_idx on lives(zone_id, added_at desc);
 
 create table if not exists headlines (
@@ -95,14 +99,21 @@ end $$;
 
 create or replace function add_live(p_zone text, p_key text, p_url text, p_creator text, p_category text)
 returns uuid language plpgsql security definer set search_path = public, extensions as $$
-declare v_id uuid;
+declare
+  v_id   uuid;
+  v_kind text;
 begin
   perform _check_key(p_zone, p_key);
   if (select count(*) from lives where zone_id = p_zone and not ended and added_at > now() - interval '2 hours') >= 16 then
     raise exception 'This zone already has 16 Lives on';
   end if;
-  insert into lives(zone_id, url, creator, category)
-  values (p_zone, trim(p_url), trim(p_creator), upper(coalesce(nullif(trim(p_category),''), 'LIVE')))
+  v_kind := case
+    when p_url ~* 'youtube\.com|youtu\.be' then 'youtube'
+    when p_url ~* '\.substack\.com'        then 'substack'
+    else 'link'
+  end;
+  insert into lives(zone_id, url, creator, category, kind)
+  values (p_zone, trim(p_url), trim(p_creator), upper(coalesce(nullif(trim(p_category),''), 'LIVE')), v_kind)
   returning id into v_id;
   return v_id;
 end $$;

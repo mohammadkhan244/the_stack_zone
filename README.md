@@ -1,8 +1,8 @@
 # The Stack Zone
 
-RedZone for Substack Lives. Anyone can start a **zone**, paste in Substack Live links, and share it. Viewers watch a 4×2 multiview with a HEADLINES ticker, paid-sub score bugs and a hype guy who yells "HE COULD GO ALL THE WAY!"
+RedZone for Substack Lives and YouTube livestreams. Anyone can start a **zone**, paste in links, and share it. Viewers watch a 4×2 multiview with a HEADLINES ticker, paid-sub score bugs and a hype guy who yells "HE COULD GO ALL THE WAY!"
 
-*Unofficial fan project. Not affiliated with Substack.*
+*Unofficial fan project. Not affiliated with Substack or YouTube.*
 
 ## How it works
 - **Zones**: anyone creates one (no login). The creator gets two links:
@@ -11,7 +11,9 @@ RedZone for Substack Lives. Anyone can start a **zone**, paste in Substack Live 
 - **+1 PAID** bumps that box's score bug and fires the hype guy for *every* viewer in real time.
 - Lives auto-expire after 2 hours, and co-hosts can tap **END** sooner. Up to 16 per zone, 8 shown in the grid.
 - **Directory**: zones marked "listed" show on the homepage, sorted by how many Lives are on. Unlisted zones are link-only.
-- Boxes link out to the Live, since Substack streams can't be embedded.
+- **YouTube links** embed inline — every box autoplays muted. Tap a box (or its header bar) to give it audio. Only one box has audio at a time. The yellow border and 🔊 badge show which one. The **🔇 Muted** button in the header mutes all.
+- **Substack links** can't be embedded (Substack blocks cross-origin iframes), so those boxes show a **WATCH ↗** card that opens the stream in a new tab.
+- The URL type (`youtube` / `substack` / `link`) is auto-detected server-side and stored in the `kind` column.
 
 ## Deploy (about 10 minutes)
 1. **Supabase**: create a free project at supabase.com → SQL Editor → paste and run `supabase/schema.sql`.
