@@ -35,6 +35,7 @@
   <input id="hl" maxlength="120" placeholder="Ticker headline…">
   <button type="button" id="hlb">Post headline</button>
   <button type="button" id="cohost">Copy co-host link</button>
+  <button type="button" id="vis"></button>
   <span id="eerr" class="err" style="width:100%"></span>
 </form>
 <div id="hype"><div>HE COULD GO<br>ALL THE WAY!<small id="hwho"></small></div></div>
@@ -81,6 +82,7 @@ async function boot() {
     const { data: ok } = await sb.rpc("check_edit_key", { p_zone: zoneId, p_key: key });
     editor = !!ok; if (!ok) { try { localStorage.removeItem("sz-key-" + zoneId); } catch {} }
     $("#editor").classList.toggle("on", editor);
+    if (editor) updateVisBtn();
   }
   await Promise.all([loadLives(), loadHeads()]);
   sb.channel("zone-" + zoneId)
@@ -325,6 +327,21 @@ $("#hlb").onclick = async () => {
   const t = $("#hl").value.trim(); if (!t) return;
   const { error } = await sb.rpc("add_headline", { p_zone: zoneId, p_key: key, p_text: t });
   if (error) $("#eerr").textContent = error.message; else $("#hl").value = "";
+};
+
+function updateVisBtn() {
+  const btn = $("#vis");
+  if (!btn) return;
+  btn.textContent = zone.listed ? "🌐 PUBLIC" : "🔒 PRIVATE";
+  btn.title = zone.listed ? "Remove from the public directory" : "List in the public directory";
+}
+
+$("#vis").onclick = async () => {
+  const next = !zone.listed;
+  const { error } = await sb.rpc("set_zone_listed", { p_zone: zoneId, p_key: key, p_listed: next });
+  if (error) { $("#eerr").textContent = error.message; return; }
+  zone.listed = next;
+  updateVisBtn();
 };
 
 $("#cohost").onclick = e => copy(viewerLink() + "#key=" + key, e.target);

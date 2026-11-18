@@ -142,12 +142,21 @@ begin
     (select id from headlines where zone_id = p_zone order by created_at desc limit 8);
 end $$;
 
+-- Toggle a zone between public (listed) and private (unlisted)
+create or replace function set_zone_listed(p_zone text, p_key text, p_listed boolean)
+returns void language plpgsql security definer set search_path = public, extensions as $$
+begin
+  perform _check_key(p_zone, p_key);
+  update zones set listed = p_listed where id = p_zone;
+end $$;
+
 grant execute on function create_zone(text, text, boolean)          to anon, authenticated;
 grant execute on function check_edit_key(text, text)                to anon, authenticated;
 grant execute on function add_live(text, text, text, text, text)    to anon, authenticated;
 grant execute on function end_live(text, text, uuid)                to anon, authenticated;
 grant execute on function bump_paid(text, text, uuid)               to anon, authenticated;
 grant execute on function add_headline(text, text, text)            to anon, authenticated;
+grant execute on function set_zone_listed(text, text, boolean)      to anon, authenticated;
 
 -- Realtime: push changes to viewers (idempotent)
 do $$ begin
