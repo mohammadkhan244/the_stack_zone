@@ -62,7 +62,7 @@ grant select on zone_directory to anon, authenticated;
 
 -- Helpers
 create or replace function _check_key(p_zone text, p_key text) returns void
-language plpgsql security definer set search_path = public as $$
+language plpgsql security definer set search_path = public, extensions as $$
 begin
   if not exists (select 1 from zone_secrets
                  where zone_id = p_zone and key_hash = encode(digest(p_key, 'sha256'), 'hex')) then
@@ -73,7 +73,7 @@ revoke all on function _check_key(text, text) from public, anon, authenticated;
 
 -- Create a zone → returns its id and private edit key
 create or replace function create_zone(p_name text, p_description text, p_listed boolean)
-returns json language plpgsql security definer set search_path = public as $$
+returns json language plpgsql security definer set search_path = public, extensions as $$
 declare
   v_id  text;
   v_key text := encode(gen_random_bytes(18), 'hex');
@@ -87,14 +87,14 @@ begin
 end $$;
 
 create or replace function check_edit_key(p_zone text, p_key text) returns boolean
-language plpgsql security definer set search_path = public as $$
+language plpgsql security definer set search_path = public, extensions as $$
 begin
   perform _check_key(p_zone, p_key); return true;
 exception when others then return false;
 end $$;
 
 create or replace function add_live(p_zone text, p_key text, p_url text, p_creator text, p_category text)
-returns uuid language plpgsql security definer set search_path = public as $$
+returns uuid language plpgsql security definer set search_path = public, extensions as $$
 declare v_id uuid;
 begin
   perform _check_key(p_zone, p_key);
@@ -108,7 +108,7 @@ begin
 end $$;
 
 create or replace function end_live(p_zone text, p_key text, p_live uuid)
-returns void language plpgsql security definer set search_path = public as $$
+returns void language plpgsql security definer set search_path = public, extensions as $$
 begin
   perform _check_key(p_zone, p_key);
   update lives set ended = true where id = p_live and zone_id = p_zone;
@@ -116,14 +116,14 @@ end $$;
 
 -- "+1 PAID" — bumps the score bug and fires the hype guy for every viewer
 create or replace function bump_paid(p_zone text, p_key text, p_live uuid)
-returns void language plpgsql security definer set search_path = public as $$
+returns void language plpgsql security definer set search_path = public, extensions as $$
 begin
   perform _check_key(p_zone, p_key);
   update lives set paid = paid + 1 where id = p_live and zone_id = p_zone;
 end $$;
 
 create or replace function add_headline(p_zone text, p_key text, p_text text)
-returns void language plpgsql security definer set search_path = public as $$
+returns void language plpgsql security definer set search_path = public, extensions as $$
 begin
   perform _check_key(p_zone, p_key);
   insert into headlines(zone_id, text) values (p_zone, trim(p_text));
