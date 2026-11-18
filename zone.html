@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>The Stack Zone</title>
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;700&family=Inter:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body class="zone">
+<div class="gate" id="gate">
+  <h1>THE STACK<b>ZONE</b></h1>
+  <p id="gsub">Every Live in this zone, on one screen. Tap a box to watch.</p>
+  <button id="go">ENTER THE ZONE ▶</button>
+</div>
+<header>
+  <a class="logo" href="/">THE STACK<b>ZONE</b></a>
+  <span class="zname" id="zname"></span>
+  <div class="sp"></div>
+  <button id="share">🔗 Share</button>
+  <button id="mute">🔊 On</button>
+  <button class="hot" id="yell">📣 ALL THE WAY</button>
+</header>
+<main id="grid"></main>
+<div id="bottom">
+  <div id="ticker"><div id="tlabel">HEADLINES</div><div id="tw"><div id="tt"></div></div></div>
+  <div class="promo"><small>ON AIR</small><span id="count">0 LIVES</span></div>
+  <div class="spons"><small>BROUGHT TO YOU BY</small>DRAFTS™</div>
+</div>
+<form id="editor">
+  <input class="url" id="url" type="url" required placeholder="Paste a Substack Live link…">
+  <input id="creator" maxlength="60" placeholder="Creator name">
+  <select id="cat"><option>WRITING</option><option>TECH</option><option>FICTION</option><option>POLICY</option><option>MARKETS</option><option>CULTURE</option><option>FOOD</option><option>FITNESS</option><option>LIVE</option></select>
+  <button class="hot">+ ADD LIVE</button>
+  <input id="hl" maxlength="120" placeholder="Ticker headline…">
+  <button type="button" id="hlb">Post headline</button>
+  <button type="button" id="cohost">Copy co-host link</button>
+  <span id="eerr" class="err" style="width:100%"></span>
+</form>
+<div id="hype"><div>HE COULD GO<br>ALL THE WAY!<small id="hwho"></small></div></div>
+
+<script src="/config.js"></script>
+<script type="module">
+import { sb, $, esc, colors, initials, guessCreator, since, isOn, hype, setSound, soundOn, unlockAudio, copy } from "/common.js";
+
+const zoneId = new URLSearchParams(location.search).get("z") || decodeURIComponent((location.pathname.match(/\/z\/([^/]+)/) || [])[1] || "");
+let key = new URLSearchParams(location.hash.slice(1)).get("key");
+try { if (key) localStorage.setItem("sz-key-" + zoneId, key); else key = localStorage.getItem("sz-key-" + zoneId); } catch {}
+let editor = false, lives = [], heads = [], zone = null;
+const viewerLink = () => location.origin + "/z/" + encodeURIComponent(zoneId);
+
+function fail(msg) { $("#gsub").textContent = msg; $("#go").style.display = "none"; }
+
+async function boot() {
+  if (!sb) return fail("This site isn't connected to its database yet.");
+  if (!zoneId) return fail("No zone in this link.");
+  const { data, error } = await sb.from("zones").select("*").eq("id", zoneId).maybeSingle();
+  if (error || !data) return fail("Zone not found. Check the link.");
+  zone = data; document.title = `${zone.name} · The Stack Zone`; $("#zname").textContent = "· " + zone.name.toUpperCase();
+  if (zone.description) $("#gsub").textContent = zone.description;
+  if (key) {
+    const { data: ok } = await sb.rpc("check_edit_key", { p_zone: zoneId, p_key: key });
+    editor = !!ok; if (!ok) { try { localStorage.removeItem("sz-key-" + zoneId); } catch {} }
+    $("#editor").classList.toggle("on", editor);
+  }
+  await Promise.all([loadLives(), loadHeads()]);
+  sb.channel("zone-" + zoneId)
+    .on("postgres_changes", { event: "*", schema: "public", table: "lives", filter: `zone_id=eq.${zoneId}` }, onLive)
+    .on("postgres_changes", { event: "*", schema: "public", table: "headlines", filter: `zone_id=eq.${zoneId}` }, loadHeads)
+    .subscribe();
+  setInterval(() => { document.querySelectorAll("[data-since]").forEach((el) => (el.textContent = since(el.dataset.since))); }, 1000);
+  setInterval(render, 60000); // expire 2h-old Lives
+}
+
+async function loadLives() {
+  const cutoff = new Date(Date.now() - 2 * 3600e3).toISOString();
+  const { data } = await sb.from("lives").select("*").eq("zone_id", zoneId).eq("ended", false).gt("added_at", cutoff).order("added_at");
+  lives = data || []; render();
+}
+async function loadHeads() {
+  const { data } = await sb.from("headlines").select("*").eq("zone_id", zoneId).order("created_at", { ascending: false }).limit(8);
+  heads = data || []; renderTicker();
+}
+function onLive({ eventType, new: n, old: o }) {
+  const i = lives.findIndex((l) => l.id === (n?.id || o?.id));
+  if (eventType === "INSERT") lives.push(n);
+  else if (eventType === "UPDATE" && i > -1) {
+    const bumped = n.paid > lives[i].paid; lives[i] = n;
+    if (bumped) { render(); flash(n); return; }
+  } else if (eventType === "DELETE" && i > -1) lives.splice(i, 1);
+  render();
+}
+function flash(l) {
+  const box = document.querySelector(`[data-id="${l.id}"]`);
+  if (box) { box.classList.remove("alert"); void box.offsetWidth; box.classList.add("alert"); const b = box.querySelector(".bug"); b.classList.add("bump"); }
+  hype(`📍 ${l.creator} · +${l.paid} paid & counting`);
+}
+
+function render() {
+  const on = lives.filter(isOn), shown = on.slice(-8);
+  $("#count").textContent = `${on.length} LIVE${on.length === 1 ? "" : "S"}`;
+  let html = shown.map((l) => {
+    const [c1, c2] = colors(l.creator);
+    return `<div class="box" data-id="${l.id}" style="--c1:${c1};--c2:${c2}">
+      <div class="hb"><span class="ini">${esc(initials(l.creator))}</span><span class="who">${esc(l.creator.toUpperCase())}</span><span class="cat">${esc(l.category)}</span></div>
+      <a class="stage" href="${esc(l.url)}" target="_blank" rel="noopener"><div class="bgfx"></div><div class="av">${esc(initials(l.creator))}</div><span class="watch">WATCH ↗</span></a>
+      <span class="live">● LIVE</span>
+      ${editor ? `<div class="tools"><button data-paid="${l.id}">+1 PAID</button><button data-end="${l.id}">END</button></div>` : ""}
+      <div class="bug"><span class="a">ON AIR</span><span class="b">+${l.paid} PAID</span><span class="c" data-since="${l.added_at}">${since(l.added_at)}</span></div>
+    </div>`;
+  }).join("");
+  for (let i = shown.length; i < 8; i++) html += `<div class="box empty">${editor ? "PASTE A LIVE BELOW ↓" : "WAITING FOR A LIVE…"}</div>`;
+  $("#grid").innerHTML = html;
+  renderTicker();
+}
+function renderTicker() {
+  const on = lives.filter(isOn);
+  const items = [...heads.map((h) => [h.text, "u"]), ...on.slice().reverse().map((l) => [`${l.creator} is LIVE · ${l.category}`, "up"])];
+  const extra = on.length - 8; if (extra > 0) items.push([`+${extra} more Lives in this zone`, ""]);
+  if (!items.length) items.push([`Welcome to ${zone?.name || "the zone"}. Lives show up here when they start.`, ""]);
+  $("#tt").innerHTML = items.map(([t, c]) => `<span class="${c}">${c === "up" ? "▲ " : ""}${esc(t)}</span>`).join("");
+}
+
+$("#grid").onclick = async (e) => {
+  const paid = e.target.dataset.paid, end = e.target.dataset.end;
+  if (paid) { e.target.disabled = true; await sb.rpc("bump_paid", { p_zone: zoneId, p_key: key, p_live: paid }); e.target.disabled = false; }
+  if (end) { e.target.disabled = true; const { error } = await sb.rpc("end_live", { p_zone: zoneId, p_key: key, p_live: end }); if (!error) { lives = lives.filter((l) => l.id !== end); render(); } }
+};
+$("#url").addEventListener("input", () => { if (!$("#creator").value) $("#creator").placeholder = guessCreator($("#url").value) || "Creator name"; });
+$("#editor").onsubmit = async (e) => {
+  e.preventDefault(); $("#eerr").textContent = "";
+  const url = $("#url").value.trim(), creator = $("#creator").value.trim() || guessCreator(url);
+  if (!/^https:\/\//.test(url)) return ($("#eerr").textContent = "Paste a full https:// link.");
+  if (!creator) return ($("#eerr").textContent = "Add the creator's name.");
+  const { error } = await sb.rpc("add_live", { p_zone: zoneId, p_key: key, p_url: url, p_creator: creator, p_category: $("#cat").value });
+  if (error) return ($("#eerr").textContent = error.message);
+  $("#url").value = ""; $("#creator").value = ""; $("#creator").placeholder = "Creator name";
+};
+$("#hlb").onclick = async () => {
+  const t = $("#hl").value.trim(); if (!t) return;
+  const { error } = await sb.rpc("add_headline", { p_zone: zoneId, p_key: key, p_text: t });
+  if (error) $("#eerr").textContent = error.message; else $("#hl").value = "";
+};
+$("#cohost").onclick = (e) => copy(viewerLink() + "#key=" + key, e.target);
+$("#share").onclick = (e) => copy(viewerLink(), e.target);
+$("#yell").onclick = () => hype("", true);
+$("#mute").onclick = (e) => { setSound(!soundOn()); e.target.textContent = soundOn() ? "🔊 On" : "🔇 Muted"; };
+$("#go").onclick = () => { unlockAudio(); $("#gate").remove(); };
+boot();
+</script>
+</body>
+</html>

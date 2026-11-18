@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>The Stack Zone — Every Live, One Screen</title>
+<meta name="description" content="Build a zone of Substack Lives and watch them like RedZone. Unofficial fan project.">
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;700&family=Inter:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header><a class="logo" href="/">THE STACK<b>ZONE</b></a></header>
+<div class="wrap">
+  <div class="hero">
+    <h1>THE STACK<b>ZONE</b></h1>
+    <p>Five Substack Lives at once and you can only pick one? Build a zone. Share the link. Watch it like RedZone.</p>
+  </div>
+  <div id="setup" class="card err" style="display:none;margin-bottom:14px">Not connected yet: add your Supabase URL and anon key to <code>config.js</code>.</div>
+  <div class="cols">
+    <div class="card">
+      <h2>🏟 START A ZONE</h2>
+      <form id="create" class="form">
+        <label>Zone name<input id="name" required minlength="2" maxlength="60" placeholder="e.g. Fiction Friday Zone"></label>
+        <label>Tagline (optional)<input id="desc" maxlength="160" placeholder="Every fiction Live, one screen"></label>
+        <label style="flex-direction:row;align-items:center;gap:8px;color:var(--txt)"><input id="listed" type="checkbox" checked style="width:auto"> List in the public directory</label>
+        <button class="hot" id="cbtn">CREATE ZONE ▶</button>
+        <div id="cerr" class="err"></div>
+      </form>
+      <div id="made" style="display:none">
+        <p class="muted">Your zone is live. <b style="color:var(--yel)">Save the co-host link</b>: it's the only way to edit this zone.</p>
+        <div class="links">
+          <label>Viewer link (share on Notes)<code id="vlink"></code></label>
+          <button id="cv">Copy viewer link</button>
+          <label>Co-host link (private: lets people add Lives)<code id="elink"></code></label>
+          <button id="ce">Copy co-host link</button>
+          <a class="btn hot" id="open" href="#">OPEN MY ZONE ▶</a>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>📺 ZONES ON AIR</h2>
+      <div id="dir" class="zlist"><p class="muted">Loading…</p></div>
+    </div>
+  </div>
+  <p class="muted" style="text-align:center;margin-top:24px">Unofficial fan project. Not affiliated with Substack.</p>
+</div>
+<script src="/config.js"></script>
+<script type="module">
+import { sb, configured, $, esc, colors, copy } from "/common.js";
+if (!configured) { $("#setup").style.display = "block"; $("#dir").innerHTML = '<p class="muted">Connect Supabase to see zones.</p>'; }
+
+async function loadDir() {
+  if (!sb) return;
+  const { data, error } = await sb.from("zone_directory").select("*").order("live_count", { ascending: false }).order("created_at", { ascending: false }).limit(50);
+  if (error) { $("#dir").innerHTML = `<p class="err">Couldn't load zones.</p>`; return; }
+  $("#dir").innerHTML = data.length ? data.map((z) => {
+    const [c1] = colors(z.id);
+    return `<a class="zrow" style="--c1:${c1}" href="/z/${encodeURIComponent(z.id)}"><div><b>${esc(z.name)}</b><div class="muted">${esc(z.description || "")}</div></div>
+      <span class="pill ${z.live_count ? "on" : ""}">${z.live_count ? `● ${z.live_count} LIVE` : "OFF AIR"}</span></a>`;
+  }).join("") : '<p class="muted">No zones yet. Start the first one.</p>';
+}
+loadDir(); setInterval(loadDir, 30000);
+
+$("#create").onsubmit = async (e) => {
+  e.preventDefault(); $("#cerr").textContent = "";
+  if (!sb) { $("#cerr").textContent = "Supabase isn't configured yet."; return; }
+  $("#cbtn").disabled = true;
+  const { data, error } = await sb.rpc("create_zone", { p_name: $("#name").value, p_description: $("#desc").value, p_listed: $("#listed").checked });
+  $("#cbtn").disabled = false;
+  if (error) { $("#cerr").textContent = "Couldn't create the zone: " + error.message; return; }
+  const base = location.origin + "/z/" + encodeURIComponent(data.id);
+  const edit = base + "#key=" + data.edit_key;
+  try { localStorage.setItem("sz-key-" + data.id, data.edit_key); } catch {}
+  $("#vlink").textContent = base; $("#elink").textContent = edit; $("#open").href = edit;
+  $("#cv").onclick = (ev) => copy(base, ev.target); $("#ce").onclick = (ev) => copy(edit, ev.target);
+  $("#create").style.display = "none"; $("#made").style.display = "block"; loadDir();
+};
+</script>
+</body>
+</html>
