@@ -138,6 +138,12 @@ grant execute on function end_live(text, text, uuid)                to anon, aut
 grant execute on function bump_paid(text, text, uuid)               to anon, authenticated;
 grant execute on function add_headline(text, text, text)            to anon, authenticated;
 
--- Realtime: push changes to viewers
-alter publication supabase_realtime add table lives;
-alter publication supabase_realtime add table headlines;
+-- Realtime: push changes to viewers (idempotent)
+do $$ begin
+  if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and tablename = 'lives') then
+    alter publication supabase_realtime add table lives;
+  end if;
+  if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and tablename = 'headlines') then
+    alter publication supabase_realtime add table headlines;
+  end if;
+end $$;
